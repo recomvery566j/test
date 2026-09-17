@@ -24,7 +24,7 @@ jobs:
       - name: Setup Build Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y jq curl wget apksigner
+          sudo apt-get install -y jq curl wget apksigner unzip
 
       - name: Fetch Dependencies
         env:
@@ -35,7 +35,6 @@ jobs:
           CLI_URL=$(echo "$CLI_RES" | jq -r '[.[] | select(.assets | length > 0)][0].assets[] | select(.name | endswith(".jar")) | .browser_download_url' | head -n 1)
           
           if [ -z "$CLI_URL" ] || [ "$CLI_URL" == "null" ]; then
-            echo "Critical Error: Failed to extract CLI download URL"
             exit 1
           fi
           wget -qO cli.jar "$CLI_URL"
@@ -50,17 +49,24 @@ jobs:
             
             echo "gpr.user=$GITHUB_ACTOR" >> gradle.properties
             echo "gpr.key=$GITHUB_TOKEN" >> gradle.properties
-            echo "GITHUB_ACTOR=$GITHUB_ACTOR" >> gradle.properties
-            echo "GITHUB_TOKEN=$GITHUB_TOKEN" >> gradle.properties
             
             chmod +x gradlew
             ./gradlew build
             
-            cp patches/build/libs/*.jar ../patches.jar || cp patches/build/libs/*.rvp ../patches.jar
-            cp patches/build/libs/*.json ../patches.json || cp patches-bundle.json ../patches.json
+            PATCH_OUT=$(find . -type f \( -name "*.jar" -o -name "*.rvp" \) | grep -ivE "(sources|javadoc|test)" | head -n 1)
+            EXT="${PATCH_OUT##*.}"
+            cp "$PATCH_OUT" "../patches.$EXT"
+            
+            JSON_OUT=$(find . -type f -name "patches-bundle.json" -o -name "patches.json" | head -n 1)
+            cp "$JSON_OUT" ../patches.json
+            
             cd ..
+            echo "PATCH_FILE=patches.$EXT" >> $GITHUB_ENV
           else
-            wget -qO patches.jar "$PATCHES_URL"
+            EXT="${PATCHES_URL##*.}"
+            wget -qO "patches.$EXT" "$PATCHES_URL"
+            echo "PATCH_FILE=patches.$EXT" >> $GITHUB_ENV
+            
             if [ -n "$JSON_URL" ] && [ "$JSON_URL" != "null" ]; then
               wget -qO patches.json "$JSON_URL"
             fi
@@ -80,7 +86,7 @@ jobs:
       - name: Execute Patch Process
         run: |
           java -jar cli.jar patch \
-            --patches patches.jar \
+            --patches $PATCH_FILE \
             --apk target.apk \
             --out patched_output.apk
 
