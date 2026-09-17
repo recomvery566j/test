@@ -31,28 +31,23 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           CLI_RES=$(curl -s -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/revanced/revanced-cli/releases")
-          CLI_URL=$(echo "$CLI_RES" | jq -r '.[0].assets[] | select(.name | endswith(".jar")) | .browser_download_url' | head -n 1)
-          
-          if [ -z "$CLI_URL" ] || [ "$CLI_URL" == "null" ]; then
-            echo "Critical Error: Failed to extract CLI download URL."
-            exit 1
-          fi
+          CLI_URL=$(echo "$CLI_RES" | jq -r '[.[] | select(.assets | length > 0)][0].assets[] | select(.name | endswith(".jar")) | .browser_download_url' | head -n 1)
           wget -qO cli.jar "$CLI_URL"
 
           PATCHES_RES=$(curl -s -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/morpheapp/morphe-patches/releases")
-          PATCHES_URL=$(echo "$PATCHES_RES" | jq -r '.[0].assets[] | select(.name | test("\\.(jar|rvp)$")) | .browser_download_url' | head -n 1)
-          JSON_URL=$(echo "$PATCHES_RES" | jq -r '.[0].assets[] | select(.name | endswith(".json")) | .browser_download_url' | head -n 1)
-          
+          PATCHES_URL=$(echo "$PATCHES_RES" | jq -r '[.[] | select(.assets | length > 0)][0].assets[] | select(.name | endswith(".jar") or endswith(".rvp")) | .browser_download_url' | head -n 1)
+          JSON_URL=$(echo "$PATCHES_RES" | jq -r '[.[] | select(.assets | length > 0)][0].assets[] | select(.name | endswith(".json")) | .browser_download_url' | head -n 1)
+
           if [ -z "$PATCHES_URL" ] || [ "$PATCHES_URL" == "null" ]; then
-            echo "Critical Error: Failed to extract Patches download URL."
-            exit 1
-          fi
-          
-          EXT="${PATCHES_URL##*.}"
-          wget -qO "patches.$EXT" "$PATCHES_URL"
-          echo "PATCH_FILE=patches.$EXT" >> $GITHUB_ENV
-          
-          if [ -n "$JSON_URL" ] && [ "$JSON_URL" != "null" ]; then
+            git clone https://github.com/morpheapp/morphe-patches.git workspace_patches
+            cd workspace_patches
+            chmod +x gradlew
+            ./gradlew build
+            cp build/libs/*.jar ../patches.jar || cp build/libs/*.rvp ../patches.jar
+            cp build/libs/*.json ../patches.json || cp patches-bundle.json ../patches.json
+            cd ..
+          else
+            wget -qO patches.jar "$PATCHES_URL"
             wget -qO patches.json "$JSON_URL"
           fi
 
@@ -62,17 +57,15 @@ jobs:
           TARGET_VERSION=$(jq -r ".[] | select(.package == \"$PACKAGE_NAME\") | .versions[-1]" patches.json)
           
           if [ -z "$TARGET_VERSION" ] || [ "$TARGET_VERSION" == "null" ]; then
-            echo "Failed to resolve target version from patches.json"
             exit 1
           fi
           
-          echo "Target Version resolved: $TARGET_VERSION"
           curl -sL "https://api.example-apk-mirror.com/download?package=$PACKAGE_NAME&version=$TARGET_VERSION" -o target.apk
 
       - name: Execute Patch Process
         run: |
           java -jar cli.jar patch \
-            --patches $PATCH_FILE \
+            --patches patches.jar \
             --apk target.apk \
             --out patched_output.apk
 
