@@ -1,0 +1,71 @@
+name: Automated Cloud Patcher
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_package:
+        description: 'Target Application Package Name (e.g., com.example.app)'
+        required: true
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java Environment
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'zulu'
+
+      - name: Setup Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq curl wget apksigner
+
+      - name: Fetch Latest CLI and Patches
+        run: |
+          CLI_URL=$(curl -s https://api.github.com/repos/morphe-org/morphe-cli/releases/latest | jq -r '.assets[] | select(.name | endswith(".jar")) | .browser_download_url')
+          PATCHES_URL=$(curl -s https://api.github.com/repos/morphe-org/morphe-patches/releases/latest | jq -r '.assets[] | select(.name | endswith(".jar")) | .browser_download_url')
+          JSON_URL=$(curl -s https://api.github.com/repos/morphe-org/morphe-patches/releases/latest | jq -r '.assets[] | select(.name | endswith(".json")) | .browser_download_url')
+          
+          wget -qO cli.jar $CLI_URL
+          wget -qO patches.jar $PATCHES_URL
+          wget -qO patches.json $JSON_URL
+
+      - name: Resolve Target Version and Fetch APK
+        run: |
+          PACKAGE_NAME="${{ github.event.inputs.target_package }}"
+          TARGET_VERSION=$(jq -r ".[] | select(.package == \"$PACKAGE_NAME\") | .versions[-1]" patches.json)
+          
+          if [ -z "$TARGET_VERSION" ] || [ "$TARGET_VERSION" == "null" ]; then
+            echo "Failed to resolve target version from patches.json"
+            exit 1
+          fi
+          
+          echo "Target Version resolved: $TARGET_VERSION"
+          
+          # 利用第三方工具或 API 抓取对应版本的 APK (此处用下载脚本替代演示)
+          curl -sL "https://api.example-apk-mirror.com/download?package=$PACKAGE_NAME&version=$TARGET_VERSION" -o target.apk
+
+      - name: Execute Patch Process
+        run: |
+          java -jar cli.jar patch \
+            --patches patches.jar \
+            --apk target.apk \
+            --out patched_output.apk
+
+      - name: Sign Patched APK
+        run: |
+          keytool -genkey -v -keystore temp.keystore -alias temp -keyalg RSA -keysize 2048 -validity 10000 -storepass password -keypass password -dname "CN=Morphe, OU=Patcher, O=Morphe, L=Unknown, ST=Unknown, C=Unknown"
+          apksigner sign --ks temp.keystore --ks-pass pass:password --in patched_output.apk --out final_release.apk
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Patched-${{ github.event.inputs.target_package }}
+          path: final_release.apk
+          retention-days: 1
