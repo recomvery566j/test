@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       target_package:
-        description: 'Target Application Package Name (e.g., com.example.app)'
+        description: 'Target Application Package Name (e.g. com.example.app)'
         required: true
         type: string
 
@@ -28,27 +28,42 @@ jobs:
 
       - name: Fetch Dependencies
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ACTOR: ${{ github.actor }}
         run: |
-          CLI_RES=$(curl -s -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/revanced/revanced-cli/releases")
+          CLI_RES=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" "https://api.github.com/repos/revanced/revanced-cli/releases")
           CLI_URL=$(echo "$CLI_RES" | jq -r '[.[] | select(.assets | length > 0)][0].assets[] | select(.name | endswith(".jar")) | .browser_download_url' | head -n 1)
+          
+          if [ -z "$CLI_URL" ] || [ "$CLI_URL" == "null" ]; then
+            echo "Critical Error: Failed to extract CLI download URL"
+            exit 1
+          fi
           wget -qO cli.jar "$CLI_URL"
 
-          PATCHES_RES=$(curl -s -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/morpheapp/morphe-patches/releases")
-          PATCHES_URL=$(echo "$PATCHES_RES" | jq -r '[.[] | select(.assets | length > 0)][0].assets[] | select(.name | endswith(".jar") or endswith(".rvp")) | .browser_download_url' | head -n 1)
+          PATCHES_RES=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" "https://api.github.com/repos/morpheapp/morphe-patches/releases")
+          PATCHES_URL=$(echo "$PATCHES_RES" | jq -r '[.[] | select(.assets | length > 0)][0].assets[] | select(.name | test("\\.(jar|rvp)$")) | .browser_download_url' | head -n 1)
           JSON_URL=$(echo "$PATCHES_RES" | jq -r '[.[] | select(.assets | length > 0)][0].assets[] | select(.name | endswith(".json")) | .browser_download_url' | head -n 1)
 
           if [ -z "$PATCHES_URL" ] || [ "$PATCHES_URL" == "null" ]; then
             git clone https://github.com/morpheapp/morphe-patches.git workspace_patches
             cd workspace_patches
+            
+            echo "gpr.user=$GITHUB_ACTOR" >> gradle.properties
+            echo "gpr.key=$GITHUB_TOKEN" >> gradle.properties
+            echo "GITHUB_ACTOR=$GITHUB_ACTOR" >> gradle.properties
+            echo "GITHUB_TOKEN=$GITHUB_TOKEN" >> gradle.properties
+            
             chmod +x gradlew
             ./gradlew build
+            
             cp build/libs/*.jar ../patches.jar || cp build/libs/*.rvp ../patches.jar
             cp build/libs/*.json ../patches.json || cp patches-bundle.json ../patches.json
             cd ..
           else
             wget -qO patches.jar "$PATCHES_URL"
-            wget -qO patches.json "$JSON_URL"
+            if [ -n "$JSON_URL" ] && [ "$JSON_URL" != "null" ]; then
+              wget -qO patches.json "$JSON_URL"
+            fi
           fi
 
       - name: Resolve Target Version and Fetch APK
