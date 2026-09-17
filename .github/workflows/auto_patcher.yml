@@ -27,14 +27,37 @@ jobs:
           sudo apt-get install -y jq curl wget apksigner
 
       - name: Fetch Latest CLI and Patches
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          CLI_URL=$(curl -s https://api.github.com/repos/morphe-org/morphe-cli/releases/latest | jq -r '.assets[] | select(.name | endswith(".jar")) | .browser_download_url')
-          PATCHES_URL=$(curl -s https://api.github.com/repos/morphe-org/morphe-patches/releases/latest | jq -r '.assets[] | select(.name | endswith(".jar")) | .browser_download_url')
-          JSON_URL=$(curl -s https://api.github.com/repos/morphe-org/morphe-patches/releases/latest | jq -r '.assets[] | select(.name | endswith(".json")) | .browser_download_url')
-          
-          wget -qO cli.jar $CLI_URL
-          wget -qO patches.jar $PATCHES_URL
-          wget -qO patches.json $JSON_URL
+          fetch_url() {
+            local repo=$1
+            local ext=$2
+            local response=$(curl -s -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/$repo/releases/latest")
+            
+            local err_msg=$(echo "$response" | jq -r '.message // empty')
+            if [ -n "$err_msg" ]; then
+              echo "API Error for $repo: $err_msg"
+              exit 1
+            fi
+            
+            local url=$(echo "$response" | jq -r ".assets[] | select(.name | endswith(\"$ext\")) | .browser_download_url")
+            echo "$url"
+          }
+
+          CLI_URL=$(fetch_url "morpheapp/morphe-cli" ".jar")
+          PATCHES_URL=$(fetch_url "morpheapp/morphe-patches" ".jar")
+          JSON_URL=$(fetch_url "morpheapp/morphe-patches" ".json")
+
+          if [ -z "$CLI_URL" ] || [ "$CLI_URL" == "null" ]; then
+            echo "morpheapp/morphe-cli not found, initiating fallback to revanced-cli"
+            CLI_URL=$(fetch_url "revanced/revanced-cli" ".jar")
+          fi
+
+          wget -qO cli.jar "$CLI_URL"
+          wget -qO patches.jar "$PATCHES_URL"
+          wget -qO patches.json "$JSON_URL"
+
 
       - name: Resolve Target Version and Fetch APK
         run: |
