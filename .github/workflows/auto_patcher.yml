@@ -56,8 +56,8 @@ jobs:
             chmod +x gradlew
             ./gradlew build
             
-            cp build/libs/*.jar ../patches.jar || cp build/libs/*.rvp ../patches.jar
-            cp build/libs/*.json ../patches.json || cp patches-bundle.json ../patches.json
+            cp patches/build/libs/*.jar ../patches.jar || cp patches/build/libs/*.rvp ../patches.jar
+            cp patches/build/libs/*.json ../patches.json || cp patches-bundle.json ../patches.json
             cd ..
           else
             wget -qO patches.jar "$PATCHES_URL"
