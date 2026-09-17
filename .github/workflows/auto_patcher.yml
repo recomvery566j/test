@@ -26,29 +26,29 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y jq curl wget apksigner
 
-      - name: Fetch Patches and Extract CLI
+      - name: Fetch Dependencies
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 1. 获取 morphe-patches 最新 Release 产物
-          RESPONSE=$(curl -s -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/morpheapp/morphe-patches/releases/latest")
+          CLI_RES=$(curl -s -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/revanced/revanced-cli/releases/latest")
+          CLI_URL=$(echo "$CLI_RES" | jq -r '.assets[] | select(.name | endswith(".jar")) | .browser_download_url')
           
-          PATCHES_URL=$(echo "$RESPONSE" | jq -r '.assets[] | select(.name | endswith(".jar")) | .browser_download_url')
-          JSON_URL=$(echo "$RESPONSE" | jq -r '.assets[] | select(.name | endswith(".json")) | .browser_download_url')
+          if [ -z "$CLI_URL" ] || [ "$CLI_URL" == "null" ]; then
+            echo "Critical Error: Failed to extract CLI download URL."
+            exit 1
+          fi
+          wget -qO cli.jar "$CLI_URL"
+
+          PATCHES_RES=$(curl -s -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/morpheapp/morphe-patches/releases/latest")
+          PATCHES_URL=$(echo "$PATCHES_RES" | jq -r '.assets[] | select(.name | endswith(".jar")) | .browser_download_url')
+          JSON_URL=$(echo "$PATCHES_RES" | jq -r '.assets[] | select(.name | endswith(".json")) | .browser_download_url')
           
+          if [ -z "$PATCHES_URL" ] || [ "$PATCHES_URL" == "null" ]; then
+            echo "Critical Error: Failed to extract Patches download URL."
+            exit 1
+          fi
           wget -qO patches.jar "$PATCHES_URL"
           wget -qO patches.json "$JSON_URL"
-
-          # 2. 根据 morphe-patches 源码结构直接获取内置的 revanced.zip 工具链
-          curl -sL "https://raw.githubusercontent.com/morpheapp/morphe-patches/main/archive/revanced.zip" -o revanced.zip
-          
-          # 3. 解压并动态提取 CLI 工具
-          unzip -q revanced.zip -d tools
-          CLI_JAR=$(find tools -name "*cli*.jar" | head -n 1)
-          cp "$CLI_JAR" cli.jar
-          
-          echo "CLI and Patches successfully prepared from morpheapp/morphe-patches archive."
-
 
       - name: Resolve Target Version and Fetch APK
         run: |
