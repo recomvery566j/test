@@ -4,9 +4,16 @@ on:
   workflow_dispatch:
     inputs:
       target_package:
-        description: 'Target Application Package Name (e.g. com.example.app)'
+name: Automated Cloud Patcher
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_package:
+        description: 'Target Application Package Name'
         required: true
         type: string
+        default: 'com.google.android.youtube'
 
 jobs:
   build:
@@ -53,12 +60,16 @@ jobs:
             chmod +x gradlew
             ./gradlew build
             
-            PATCH_OUT=$(find . -type f \( -name "*.jar" -o -name "*.rvp" \) | grep -ivE "(sources|javadoc|test)" | head -n 1)
+            PATCH_OUT=$(find patches/build/libs -type f \( -name "*.jar" -o -name "*.rvp" \) | grep -ivE "(sources|javadoc|test)" | head -n 1 || true)
             EXT="${PATCH_OUT##*.}"
             cp "$PATCH_OUT" "../patches.$EXT"
             
-            JSON_OUT=$(find . -type f -name "patches-bundle.json" -o -name "patches.json" | head -n 1)
-            cp "$JSON_OUT" ../patches.json
+            JSON_OUT=$(find patches/build/libs -type f -name "*.json" | head -n 1 || true)
+            if [ -n "$JSON_OUT" ]; then
+              cp "$JSON_OUT" ../patches.json
+            else
+              cp patches-bundle.json ../patches.json
+            fi
             
             cd ..
             echo "PATCH_FILE=patches.$EXT" >> $GITHUB_ENV
@@ -75,13 +86,19 @@ jobs:
       - name: Resolve Target Version and Fetch APK
         run: |
           PACKAGE_NAME="${{ github.event.inputs.target_package }}"
-          TARGET_VERSION=$(jq -r ".[] | select(.package == \"$PACKAGE_NAME\") | .versions[-1]" patches.json)
+          
+          TARGET_VERSION=$(jq -r '[.[] | objects | .compatiblePackages[]? | objects | select(.name == "'$PACKAGE_NAME'") | .versions[]?] | unique | sort_by(split(".") | map(tonumber? // 0)) | last // empty' patches.json)
           
           if [ -z "$TARGET_VERSION" ] || [ "$TARGET_VERSION" == "null" ]; then
-            exit 1
+            TARGET_VERSION="21.13.164"
           fi
           
-          curl -sL "https://api.example-apk-mirror.com/download?package=$PACKAGE_NAME&version=$TARGET_VERSION" -o target.apk
+          wget -qO apkeep https://github.com/EFForg/apkeep/releases/latest/download/apkeep-x86_64-unknown-linux-gnu
+          chmod +x apkeep
+          
+          ./apkeep -a "$PACKAGE_NAME@$TARGET_VERSION" . || curl -sL -A "Mozilla/5.0" "https://d.apkpure.com/b/APK/$PACKAGE_NAME?version=latest" -o "$PACKAGE_NAME@$TARGET_VERSION.apk"
+          
+          mv "$PACKAGE_NAME@$TARGET_VERSION.apk" target.apk
 
       - name: Execute Patch Process
         run: |
@@ -99,5 +116,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Patched-${{ github.event.inputs.target_package }}
+          path: final_release.apk
+          retention-days: 1
+
+vent.inputs.target_package }}
           path: final_release.apk
           retention-days: 1
